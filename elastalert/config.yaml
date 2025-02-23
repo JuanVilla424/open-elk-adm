@@ -1,0 +1,25 @@
+---
+rules_folder: /opt/elastalert/rules
+scan_subdirectories: true
+max_threads: 200
+notify_email: "user@domain.com"
+from_addr: "no-reply@domain.com"
+email_reply_to: "reply@domain.com"
+add_metadata_alert: True
+custom_pretty_ts_format: "%Y-%m-%d %H:%M %z"
+skip_invalid: True
+
+run_every:
+  seconds: 10
+
+buffer_time:
+  minutes: 15
+
+ca_certs: /opt/elastalert/custom_certs/ca/ca.crt
+
+es_conn_timeout: 21
+
+writeback_index: elastalert_status
+
+alert_time_limit:
+  days: 200
