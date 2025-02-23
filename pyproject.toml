@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "open-elk-adm"
-version = "1.0.1"
+version = "1.0.2"
 description = "Open ELK Stack Admin"
 authors = ["B <g46327wsj1.marbling129@passinbox.com>"]
 license = "GPLv3"
