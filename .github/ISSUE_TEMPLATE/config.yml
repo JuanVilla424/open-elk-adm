@@ -3,9 +3,9 @@
 
 blank_issues_enabled: false
 contact_links:
-  - name: ELK Admin Community Support
-    url: https://github.com/JuanVilla424/elk-adm/discussions
+  - name: Open ELK Admin Community Support
+    url: https://github.com/JuanVilla424/open-elk-adm/discussions
     about: Please ask and answer questions here.
-  - name: ELK Admin Security Reports
-    url: https://juanvilla424.github.io/elk-adm/SECURITY
+  - name: Open ELK Admin Security Reports
+    url: https://juanvilla424.github.io/open-elk-adm/SECURITY
     about: Please report security vulnerabilities here.
