@@ -5,7 +5,7 @@
 ![Logstash](https://img.shields.io/badge/Logstash-005571?logo=logstash&logoColor=fff)
 ![Kibana](https://img.shields.io/badge/Kibana-005571?logo=kibana&logoColor=fff)
 ![Status](https://img.shields.io/badge/Status-Development-blue.svg)
-[![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.en.html)
 
 Welcome to the **ELK Stack with Docker** repository! This project provides a **Docker Compose** setup for deploying an **ELK Stack** (Elasticsearch, Logstash, Kibana) for centralized logging and data visualization. It is designed to be easy to set up and use for development, testing, and production environments.
 
