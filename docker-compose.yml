@@ -1,0 +1,305 @@
+---
+
+volumes:
+  portainer_data:
+    driver: local
+  certs:
+    driver: local
+  esdata01:
+    driver: local
+  esdata02:
+    driver: local
+  kibanadata:
+    driver: local
+  esdatagent01:
+    driver: local
+  esdatagent02:
+    driver: local
+  logstashdata01:
+    driver: local
+  elastalertrules:
+    driver: local
+
+networks:
+  portainer:
+    external: false
+  elastic:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+  wazuh-bond:
+    driver: bridge
+
+services:
+  portainer:
+    image: portainer/portainer-ce:${PORTAINER_VERSION}
+    networks:
+      - default
+    ports:
+      - ${PORTAINER_HTTP_PORT}:9000
+      - ${PORTAINER_HTTPS_PORT}:9443
+    volumes:
+      - portainer_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+    healthcheck:
+      test: wget -q --no-verbose --tries=3 --no-check-certificate --spider ${PORTAINER_HC_TRANSPORT}://127.0.0.1:${PORTAINER_HC_PORT}/api/system/status || exit 1
+      interval: 20s
+      timeout: 10s
+      retries: 50
+      start_period: 30s
+
+  setup:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+    user: "0"
+    command: >
+      bash -c '
+        # Certificate generation logic
+        if [ ! -f config/certs/ca.zip ]; then
+          bin/elasticsearch-certutil ca --silent --pem -out config/certs/ca.zip;
+          unzip config/certs/ca.zip -d config/certs;
+        fi;
+        if [ ! -f config/certs/certs.zip ]; then
+          echo -ne "instances:\n  - name: es01\n    dns:\n      - es01\n      - localhost\n    ip:\n      - 127.0.0.1\n  - name: es02\n    dns:\n      - es02\n      - localhost\n    ip:\n      - 127.0.0.1\n" > config/certs/instances.yml;
+          bin/elasticsearch-certutil cert --silent --pem -out config/certs/certs.zip --in config/certs/instances.yml --ca-cert config/certs/ca/ca.crt --ca-key config/certs/ca/ca.key;
+          unzip config/certs/certs.zip -d config/certs;
+        fi;
+
+        # Permissions and ownership
+        chown -R root:root config/certs;
+        find . -type d -exec chmod 750 {} \;;
+        find . -type f -exec chmod 640 {} \;;
+
+        # Keep container alive for 4 hours (14400 seconds)
+        echo "Certificates generated. Keeping container alive for 4 hours";
+        sleep 14400'
+    healthcheck:
+      test: [ "CMD-SHELL", "[ -f config/certs/es01/es01.crt ]" ]
+      interval: 30s
+      timeout: 10s
+      retries: 480
+
+  es01:
+    depends_on:
+      setup:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    restart: always
+    mem_limit: ${ES_MEM_LIMIT}
+    networks:
+      - elastic
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - esdata01:/usr/share/elasticsearch/data
+    ports:
+      - ${ES_PORT}:9200
+    environment:
+      - node.name=es01
+      - cluster.initial_master_nodes=es01,es02
+      - discovery.seed_hosts=es02
+      - cluster.name=${CLUSTER_NAME}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - node.roles=master,data,ingest,remote_cluster_client,transform
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/es01/es01.key
+      - xpack.security.http.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/es01/es01.key
+      - xpack.security.transport.ssl.certificate=certs/es01/es01.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=${LICENSE}
+      - cluster.routing.allocation.disk.watermark.low=85%
+      - cluster.routing.allocation.disk.watermark.high=90%
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  es02:
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/elasticsearch/elasticsearch:${STACK_VERSION}
+    restart: always
+    mem_limit: ${ES_MEM_LIMIT}
+    networks:
+      - elastic
+    volumes:
+      - certs:/usr/share/elasticsearch/config/certs
+      - esdata02:/usr/share/elasticsearch/data
+    environment:
+      - node.name=es02
+      - cluster.initial_master_nodes=es01,es02
+      - discovery.seed_hosts=es01
+      - cluster.name=${CLUSTER_NAME}
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - bootstrap.memory_lock=true
+      - node.roles=master,data,ingest,remote_cluster_client,transform
+      - xpack.security.enabled=true
+      - xpack.security.http.ssl.enabled=true
+      - xpack.security.http.ssl.key=certs/es02/es02.key
+      - xpack.security.http.ssl.certificate=certs/es02/es02.crt
+      - xpack.security.http.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.enabled=true
+      - xpack.security.transport.ssl.key=certs/es02/es02.key
+      - xpack.security.transport.ssl.certificate=certs/es02/es02.crt
+      - xpack.security.transport.ssl.certificate_authorities=certs/ca/ca.crt
+      - xpack.security.transport.ssl.verification_mode=certificate
+      - xpack.license.self_generated.type=${LICENSE}
+      - cluster.routing.allocation.disk.watermark.low=85%
+      - cluster.routing.allocation.disk.watermark.high=90%
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s --cacert config/certs/ca/ca.crt https://localhost:9200 | grep -q 'missing authentication credentials'"]
+      interval: 10s
+      timeout: 10s
+      retries: 120
+
+  fleet-server01:
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/beats/elastic-agent-complete:${STACK_VERSION}
+    restart: always
+    user: elastic-agent
+    networks:
+      - elastic
+    volumes:
+      - certs:/usr/share/elastic-agent/certs
+      - esdatagent01:/usr/share/elastic-agent/state
+    ports:
+      - ${FLEET_SERVER_PORT}:8222
+    environment:
+      - FLEET_SERVER_ENABLE=true
+      - FLEET_ENROLL=1
+      - FLEET_INSECURE=true
+      - FLEET_ENROLLMENT_TOKEN=${FLEET_ENROLLMENT_TOKEN}
+      - FLEET_SERVER_POLICY="container-default-policy"
+      # - FLEET_AGENT_ID=${FLEET_AGENT_ID}
+      - FLEET_SERVER_PORT=8222
+      - FLEET_SERVER_ELASTICSEARCH_CA=/usr/share/elastic-agent/certs/ca/ca.crt
+      - FLEET_SERVER_ELASTICSEARCH_HOST=https://es01:9200
+      - ELASTICSEARCH_HOST=https://es01:9200
+      - ELASTICSEARCH_USERNAME=elastic
+      - ELASTICSEARCH_PASSWORD=${ELASTIC_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -k -s --cacert /usr/share/elastic-agent/certs/ca/ca.crt https://localhost:8220/api/status | grep -q 'HEALTHY'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  kibana:
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: docker.elastic.co/kibana/kibana:${STACK_VERSION}
+    restart: always
+    mem_limit: ${KB_MEM_LIMIT}
+    networks:
+      - elastic
+    volumes:
+      - certs:/usr/share/kibana/config/certs
+      - kibanadata:/usr/share/kibana/data
+    ports:
+      - ${KIBANA_PORT}:5601
+    environment:
+      - SERVERNAME=kibana
+      - ELASTICSEARCH_HOSTS=https://es01:9200
+      - ELASTICSEARCH_SERVICEACCOUNTTOKEN=${KIBANA_SERVICE_ACCOUNT_TOKEN}
+      - ELASTICSEARCH_SSL_CERTIFICATEAUTHORITIES=config/certs/ca/ca.crt
+      - XPACK_SECURITY_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+      - XPACK_ENCRYPTEDSAVEDOBJECTS_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+      - XPACK_REPORTING_ENCRYPTIONKEY=${ENCRYPTION_KEY}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -I http://localhost:5601 | grep -q 'HTTP/1.1 302 Found'"]
+      interval: 20s
+      timeout: 10s
+      retries: 120
+
+  logstash01:
+    depends_on:
+      es01:
+        condition: service_healthy
+      kibana:
+        condition: service_healthy
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
+    restart: unless-stopped
+    mem_limit: ${LS_MEM_LIMIT}
+    networks:
+      - elastic
+      - wazuh-bond
+    volumes:
+      - certs:/usr/share/logstash/certs
+      - logstashdata01:/usr/share/logstash/data
+    environment:
+      - xpack.monitoring.enabled=false
+      - LOGSTASH_USERNAME=${LOGSTASH_USERNAME}
+      - LOGSTASH_PASSWORD=${LOGSTASH_PASSWORD}
+      - ELASTIC_HOSTS=https://es01:9200
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://logstash01:9600/_node/pipelines | grep -q 'pipelines'"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  elastalert:
+    depends_on:
+      es01:
+        condition: service_healthy
+    image: jertel/elastalert2:${STACK_ELASTALERT_VERSION}
+    restart: always
+    networks:
+      - elastic
+      - internal
+    volumes:
+      - ./elastalert/config.yaml:/opt/elastalert/config.yaml
+      - certs:/opt/elastalert/custom_certs
+      - elastalertrules:/opt/elastalert/rules
+    environment:
+      ES_HOST: es01
+      ES_PORT: 9200
+      ES_USE_SSL: "true"
+      ES_USERNAME: ${ELASTALERT_ES_USERNAME}
+      ES_PASSWORD: ${ELASTALERT_ES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "cat /proc/*/cmdline | grep -a -o python || exit 1"]
+      interval: 40s
+      timeout: 10s
+      retries: 3
+
+  smtp-relay:
+    build: smtp-relay/
+    restart: always
+    networks:
+      - elastic
+      - internal
+    ports:
+      - ${SMTP_RELAY_PORT}:25
+    environment:
+      POSTFIX_MYHOSTNAME: ${SMTP_RELAY_HOST}
+      POSTFIX_MYNETWORKS: ${SMTP_RELAY_NETWORKS}
+      POSTFIX_RELAYHOST: ${SMTP_RELAY_EXTERNAL_SMTP_HOST}
+      POSTFIX_SMTP_USERNAME: ${SMTP_RELAY_EXTERNAL_SMTP_USERNAME}
+      POSTFIX_SMTP_PASSWORD: ${SMTP_RELAY_EXTERNAL_SMTP_PASSWORD}
+      POSTFIX_USE_STARTTLS: ${SMTP_RELAY_EXTERNAL_SMTP_STARTTLS}
+      POSTFIX_EXTERNAL_PORT: ${SMTP_RELAY_EXTERNAL_SMTP_PORT}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -m 2 telnet://smtp-relay:25 | grep '220 localhost ESMTP'"]
+      interval: 40s
+      timeout: 10s
+      retries: 120
